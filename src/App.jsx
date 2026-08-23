@@ -332,4 +332,248 @@ async function interpret(source, items, question, moon, lang) {
 
 // Дістає description/advice навіть із неповного або "сирого" JSON
 function salvage(text) {
-  const clean = text.replace(/```json|
+  const clean = text.replace(/```json|```/g, "").trim();
+  try { const p = JSON.parse(clean); if (p.description || p.advice) return { description: p.description || "", advice: p.advice || "" }; } catch (e) {}
+  const un = (s) => s ? s.replace(/\\"/g, '"').replace(/\\n/g, " ").replace(/\\\\/g, "\\").trim() : "";
+  const dm = clean.match(/"description"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  const am = clean.match(/"advice"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  const desc = un(dm && dm[1]);
+  const adv = un(am && am[1]);
+  if (desc || adv) return { description: desc, advice: adv };
+  const plain = clean.replace(/[{}]/g, "").replace(/"(description|advice)"\s*:/g, " ").replace(/"/g, "").trim();
+  return { description: plain, advice: "" };
+}
+
+function CardFace({ item, compact = false, index = 0, lang = "uk" }) {
+  const [imgOk, setImgOk] = useState(true);
+  if (!item) return null;
+  const isQuote = item.kind === "quote";
+  const url = item.slug ? `${IMAGE_BASE}/${item.slug}.webp` : "";
+  const showImg = !!url && imgOk && !isQuote;
+  const label = lbl(item, lang);
+  const glyphSize = compact ? 28 : 46;
+  const nameSize = compact ? 15 : 27;
+  const imgNameSize = compact ? 14 : 23;
+  return (
+    <div className="ork-reveal ork-glow" style={{ position:"relative", width:"100%", maxWidth: compact?150:300, margin: compact?0:"0 auto", aspectRatio: isQuote?"4 / 5":"9 / 16", borderRadius:18, padding:2, background:`linear-gradient(160deg, ${C.gold}, ${C.ember} 60%, ${C.gold})`, animationDelay:`${index*0.12}s` }}>
+      <div style={{ position:"relative", height:"100%", borderRadius:16, overflow:"hidden", background:`radial-gradient(120% 90% at 50% 8%, ${item.c2}44, transparent 55%), linear-gradient(165deg, ${item.c1}, ${C.bg} 88%)`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", padding: compact?"16px 10px":"26px 20px" }}>
+        {showImg && (<>
+          <img src={url} alt={label} onError={()=>setImgOk(false)} style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover" }} />
+          <div style={{ position:"absolute", inset:0, background:`linear-gradient(to top, ${C.bg} 2%, transparent 46%)` }} />
+          <div style={{ position:"absolute", left:0, right:0, bottom: compact?10:16, padding:"0 10px", textAlign:"center" }}>
+            {item.roman && <div style={{ fontFamily:"Cormorant Garamond", fontStyle:"italic", fontSize: compact?12:15, color:C.gold }}>{item.roman}</div>}
+            <div style={{ fontFamily:"Cormorant Garamond", fontWeight:600, fontSize:imgNameSize, lineHeight:1.05, color:C.cream, textShadow:"0 2px 12px rgba(0,0,0,.85)" }}>{label}</div>
+          </div>
+        </>)}
+        {!showImg && <div style={{ position:"absolute", inset: compact?7:10, borderRadius:10, border:`1px solid ${C.line}` }} />}
+        {!showImg && !isQuote && (<>
+          {!compact && <div style={{ fontFamily:"Manrope", fontSize:11, letterSpacing:3, textTransform:"uppercase", color:C.mauve, marginBottom:14 }}>{tg(item,lang)}</div>}
+          <div className="ork-float" style={{ fontSize:glyphSize, color:C.goldSoft, lineHeight:1, marginBottom: compact?10:16, textShadow:`0 0 24px ${item.c2}88` }}>{item.glyph}</div>
+          {item.roman && <div style={{ fontFamily:"Cormorant Garamond", fontStyle:"italic", fontSize: compact?15:20, color:C.gold, marginBottom:4 }}>{item.roman}</div>}
+          <div style={{ fontFamily:"Cormorant Garamond", fontWeight:600, fontSize:nameSize, lineHeight:1.1, color:C.cream }}>{label}</div>
+        </>)}
+        {isQuote && (<>
+          <div style={{ fontFamily:"Cormorant Garamond", fontSize: compact?34:54, color:C.gold, lineHeight:0.6, marginBottom:6 }}>❝</div>
+          <div className="ork-quote" style={{ fontFamily:"Cormorant Garamond", fontStyle:"italic", fontSize: (label.length > 90 ? (compact?11:15) : label.length > 60 ? (compact?12:18) : (compact?14:21)), lineHeight:1.28, color:C.cream, marginBottom:12, maxHeight:"60%" }}>{label}</div>
+          <div style={{ width:34, height:1, background:C.gold, opacity:0.6, marginBottom:10, flex:"0 0 auto" }} />
+          <div style={{ fontFamily:"Manrope", fontSize: compact?10:12, letterSpacing:2, textTransform:"uppercase", color:C.gold, flex:"0 0 auto" }}>{item.author}</div>
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+// —— Відгуки (наповнюєш тільки ти) ——
+const REVIEWS = [
+  { text: "Витягнула три карти перед важливою розмовою — і слова самі знайшлися. Дякую за цей простір тиші.", author: "Марина, Київ" },
+  { text: "Щоранку починаю день із підказки. Це мій маленький ритуал ясності.", author: "Олег, Львів" },
+];
+const FORM_ENDPOINT = "https://script.google.com/macros/s/AKfycbw0xwKNOGd4soBT2TjWVwHFnu2UfSaD8VQp8u92a5B8_oIa4siUKkgiuG6Z1a3uYgPB/exec";
+const CONTACT_EMAIL = "твоя@пошта.com";
+
+export default function App() {
+  const decks = useMemo(()=>({ tarot: buildTarot(), mac: buildMac(), quote: buildQuotes() }), []);
+  const lang = "uk";
+  const t = T[lang];
+  const [now, setNow] = React.useState(new Date());
+  React.useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const dateStr = now.toLocaleDateString("uk-UA", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const timeStr = now.toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const [source, setSource] = useState("tarot");
+  const [count, setCount] = useState(1);
+  const [question, setQuestion] = useState("");
+  const [items, setItems] = useState([]);
+  const [reading, setReading] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const resultRef = useRef(null);
+  const moon = useMemo(()=>moonInfo(new Date()), []);
+  const [form, setForm] = useState({ name:"", contact:"", request:"" });
+  const [formState, setFormState] = useState("idle");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewForm, setReviewForm] = useState({ author:"", text:"" });
+  const [reviewState, setReviewState] = useState("idle");
+
+  const draw = async () => {
+    if (loading) return;
+    if (limitLeft() <= 0) { setError(t.limit); return; }
+    setError(""); setReading(null);
+    const pool = [...decks[source]]; const picked = [];
+    for (let k=0; k<count && pool.length; k++) picked.push(pool.splice(Math.floor(Math.random()*pool.length),1)[0]);
+    setItems(picked); bumpLimit(); setLoading(true);
+    setTimeout(()=>resultRef.current?.scrollIntoView({ behavior:"smooth", block:"start" }), 60);
+    try { const r = await interpret(source, picked, question, lang==="en"?moon.en:moon.uk, lang); setReading(r); }
+    catch { setError(t.apiError); }
+    finally { setLoading(false); }
+  };
+
+  const submitForm = async () => {
+    if (!form.name.trim() || !form.contact.trim()) { setFormState("need"); return; }
+    if (FORM_ENDPOINT) {
+      setFormState("sending");
+      try { await fetch(FORM_ENDPOINT, { method:"POST", mode:"no-cors", headers:{ "Content-Type":"text/plain;charset=utf-8" }, body: JSON.stringify({ type:"Запис на консультацію", ...form }) }); setFormState("done"); }
+      catch { setFormState("error"); }
+    } else {
+      const subj = encodeURIComponent("Запис на консультацію — Твій Код Дня");
+      const body = encodeURIComponent(`Ім'я: ${form.name}\nКонтакт: ${form.contact}\nЗапит: ${form.request}`);
+      window.location.href = `mailto:${CONTACT_EMAIL}?subject=${subj}&body=${body}`; setFormState("done");
+    }
+  };
+  const submitReview = async () => {
+    if (!reviewForm.text.trim()) { setReviewState("need"); return; }
+    if (FORM_ENDPOINT) {
+      setReviewState("sending");
+      try { await fetch(FORM_ENDPOINT, { method:"POST", mode:"no-cors", headers:{ "Content-Type":"text/plain;charset=utf-8" }, body: JSON.stringify({ type:"Відгук", author: reviewForm.author, text: reviewForm.text }) }); setReviewState("done"); }
+      catch { setReviewState("error"); }
+    } else {
+      const subj = encodeURIComponent("Новий відгук — Твій Код Дня");
+      const body = encodeURIComponent(`Ім'я: ${reviewForm.author}\nВідгук: ${reviewForm.text}`);
+      window.location.href = `mailto:${CONTACT_EMAIL}?subject=${subj}&body=${body}`; setReviewState("done");
+    }
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg, color:C.cream, fontFamily:"Manrope, system-ui, sans-serif" }}>
+      <style>{STYLE}</style>
+      <div style={{ maxWidth:440, margin:"0 auto", padding:"22px 20px 64px" }}>
+
+        <header style={{ textAlign:"center", marginBottom:28, paddingTop:14 }}>
+          <h1 style={{ fontFamily:"Cormorant Garamond", fontWeight:500, fontSize:46, lineHeight:1.05, margin:0, color:C.cream }}>Твій Код Дня</h1>
+          <p style={{ fontFamily:"Cormorant Garamond", fontStyle:"italic", fontSize:19, color:C.mauve, marginTop:6 }}>{t.subtitle}</p>
+          <div style={{ fontFamily:"Manrope", fontSize:12, letterSpacing:1, color:C.gold, marginTop:10 }}>{moon.emoji} {moon.uk} · {moon.day}-й місячний день</div>
+          <div style={{ fontFamily:"Manrope", fontSize:12, color:C.mauve, marginTop:6 }}>{dateStr}</div>
+          <div style={{ fontFamily:"Cormorant Garamond", fontSize:22, letterSpacing:2, color:C.cream, marginTop:2 }}>{timeStr}</div>
+        </header>
+
+        <label style={{ display:"block", fontFamily:"Manrope", fontSize:11, letterSpacing:2, textTransform:"uppercase", color:C.mauve, marginBottom:8 }}>{t.howMany}</label>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:22 }}>
+          {[1,2,3].map((n)=>{ const active = count===n; return (
+            <button key={n} onClick={()=>{ setCount(n); setItems([]); setReading(null); setError(""); }} className="ork-src ork-btn" style={{ cursor:"pointer", borderRadius:14, padding:"12px 8px", background: active?`linear-gradient(165deg, ${C.panel2}, ${C.panel})`:C.panel, border: active?`1px solid ${C.gold}`:`1px solid ${C.line}`, boxShadow: active?`0 0 22px -8px ${C.gold}`:"none" }}>
+              <div style={{ fontFamily:"Cormorant Garamond", fontWeight:600, fontSize:26, lineHeight:1, color: active?C.cream:C.mauve }}>{n}</div>
+              <div style={{ fontFamily:"Manrope", fontSize:10, letterSpacing:1, color:C.mauve, marginTop:3 }}>{t.cardWords[n-1]}</div>
+            </button>
+          ); })}
+        </div>
+
+        <label style={{ fontFamily:"Manrope", fontSize:11, letterSpacing:2, textTransform:"uppercase", color:C.mauve }}>{t.question}</label>
+        <textarea value={question} onChange={(e)=>setQuestion(e.target.value)} rows={2} placeholder={t.questionPh} style={{ width:"100%", marginTop:8, marginBottom:22, resize:"none", background:C.panel, border:`1px solid ${C.line}`, borderRadius:14, color:C.cream, fontFamily:"Manrope", fontSize:16, padding:"14px 16px", outline:"none", boxSizing:"border-box" }} />
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:24 }}>
+          {SOURCE_KEYS.map((s)=>{ const active = source===s.key; const [title,sub] = t.sources[s.key]; return (
+            <button key={s.key} onClick={()=>{ setSource(s.key); setItems([]); setReading(null); setError(""); }} className="ork-src ork-btn" style={{ cursor:"pointer", borderRadius:14, padding:"16px 8px", background: active?`linear-gradient(165deg, ${C.panel2}, ${C.panel})`:C.panel, border: active?`1px solid ${C.gold}`:`1px solid ${C.line}`, boxShadow: active?`0 0 22px -8px ${C.gold}`:"none" }}>
+              <div style={{ fontSize:22, color: active?C.goldSoft:C.mauve, marginBottom:6 }}>{s.glyph}</div>
+              <div style={{ fontFamily:"Cormorant Garamond", fontWeight:600, fontSize:19, color: active?C.cream:C.mauve }}>{title}</div>
+              <div style={{ fontFamily:"Manrope", fontSize:10, letterSpacing:1, color:C.mauve, marginTop:2 }}>{sub}</div>
+            </button>
+          ); })}
+        </div>
+
+        <button onClick={draw} disabled={loading} className="ork-btn ork-shimmer" style={{ position:"relative", overflow:"hidden", width:"100%", cursor: loading?"default":"pointer", border:"none", borderRadius:16, padding:"18px", marginBottom:34, background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft} 55%, ${C.gold})`, color:"#221704", fontFamily:"Manrope", fontWeight:600, fontSize:16, letterSpacing:1, filter: loading?"grayscale(.3) brightness(.85)":"none" }}>
+          {loading ? (count>1?t.readingMany:t.readingOne) : t.getAnswer}
+        </button>
+
+        <div ref={resultRef}>
+          {items.length > 0 && (
+            <div style={{ display:"flex", justifyContent:"center", alignItems:"flex-start", gap: items.length>1?10:0, flexWrap:"nowrap" }}>
+              {items.map((it,i)=>(<CardFace key={(it.slug||it.luk)+"-"+i} item={it} compact={items.length>1} index={i} lang={lang} />))}
+            </div>
+          )}
+          {loading && (<div style={{ textAlign:"center", marginTop:26 }}><div className="ork-spin" style={{ display:"inline-block", width:26, height:26, borderRadius:"50%", border:`2px solid ${C.line}`, borderTopColor:C.gold }} /></div>)}
+          {error && (<div className="ork-rise" style={{ marginTop:22, textAlign:"center", color:C.mauve, fontFamily:"Cormorant Garamond", fontStyle:"italic", fontSize:17 }}>{error}</div>)}
+          {reading && !loading && (
+            <div className="ork-rise" style={{ marginTop:48 }}>
+              {reading.description && (<section style={{ marginBottom:18, background:C.panel, border:`1px solid ${C.line}`, borderRadius:16, padding:"18px 18px 20px" }}>
+                <div style={{ fontFamily:"Manrope", fontSize:10, letterSpacing:3, textTransform:"uppercase", color:C.gold, marginBottom:10 }}>{t.meaning}</div>
+                <p style={{ fontFamily:"Cormorant Garamond", fontSize:20, lineHeight:1.42, margin:0, color:C.cream }}>{reading.description}</p>
+              </section>)}
+              {reading.advice && (<section style={{ background:`linear-gradient(165deg, ${C.panel2}, ${C.panel})`, border:`1px solid ${C.gold}`, borderRadius:16, padding:"18px 18px 20px", boxShadow:`0 0 30px -16px ${C.gold}` }}>
+                <div style={{ fontFamily:"Manrope", fontSize:10, letterSpacing:3, textTransform:"uppercase", color:C.goldSoft, marginBottom:10 }}>{t.guidance}</div>
+                <p style={{ fontFamily:"Cormorant Garamond", fontSize:20, lineHeight:1.42, margin:0, color:C.cream }}>{reading.advice}</p>
+              </section>)}
+            </div>
+          )}
+        </div>
+
+        <section style={{ marginTop:52 }}>
+          <h2 style={{ fontFamily:"Cormorant Garamond", fontWeight:500, fontSize:30, textAlign:"center", color:C.cream, margin:"0 0 18px" }}>{t.reviews}</h2>
+          {REVIEWS.map((r,i)=>(<div key={i} style={{ background:C.panel, border:`1px solid ${C.line}`, borderRadius:16, padding:"16px 18px 16px", marginBottom:12 }}>
+            <div style={{ fontFamily:"Cormorant Garamond", fontSize:38, color:C.gold, lineHeight:0.5, height:20 }}>❝</div>
+            <p style={{ fontFamily:"Cormorant Garamond", fontStyle:"italic", fontSize:19, lineHeight:1.4, color:C.cream, margin:"0 0 10px" }}>{r.text}</p>
+            <div style={{ fontFamily:"Manrope", fontSize:12, letterSpacing:1, color:C.gold }}>— {r.author}</div>
+          </div>))}
+          {reviewState === "done" ? (
+            <div className="ork-rise" style={{ background:`linear-gradient(165deg, ${C.panel2}, ${C.panel})`, border:`1px solid ${C.gold}`, borderRadius:16, padding:"18px", textAlign:"center", marginTop:4 }}>
+              <div style={{ fontFamily:"Manrope", fontSize:14, color:C.cream, lineHeight:1.5 }}>{t.reviewDone}</div>
+            </div>
+          ) : !reviewOpen ? (
+            <button onClick={()=>setReviewOpen(true)} className="ork-btn" style={{ width:"100%", marginTop:4, cursor:"pointer", borderRadius:12, padding:"13px", background:"transparent", border:`1px solid ${C.gold}`, color:C.cream, fontFamily:"Manrope", fontWeight:600, fontSize:14, letterSpacing:0.5 }}>{t.leaveReview}</button>
+          ) : (
+            <div style={{ background:C.panel, border:`1px solid ${C.line}`, borderRadius:16, padding:"18px", marginTop:4 }}>
+              <label style={{ display:"block", fontFamily:"Manrope", fontSize:11, letterSpacing:1, textTransform:"uppercase", color:C.mauve, marginBottom:6 }}>{t.reviewAuthor}</label>
+              <input value={reviewForm.author} onChange={(e)=>setReviewForm({ ...reviewForm, author:e.target.value })} placeholder={t.reviewAuthorPh} style={{ width:"100%", background:C.bg, border:`1px solid ${C.line}`, borderRadius:10, color:C.cream, fontFamily:"Manrope", fontSize:15, padding:"11px 13px", outline:"none", boxSizing:"border-box", marginBottom:14 }} />
+              <label style={{ display:"block", fontFamily:"Manrope", fontSize:11, letterSpacing:1, textTransform:"uppercase", color:C.mauve, marginBottom:6 }}>{t.reviewText}</label>
+              <textarea value={reviewForm.text} onChange={(e)=>setReviewForm({ ...reviewForm, text:e.target.value })} rows={3} placeholder={t.reviewTextPh} style={{ width:"100%", resize:"none", background:C.bg, border:`1px solid ${C.line}`, borderRadius:10, color:C.cream, fontFamily:"Manrope", fontSize:15, padding:"11px 13px", outline:"none", boxSizing:"border-box" }} />
+              <div style={{ fontFamily:"Manrope", fontSize:12, color:C.mauve, opacity:0.85, margin:"8px 0 0", lineHeight:1.4 }}>{t.reviewNote}</div>
+              {reviewState==="need" && <div style={{ fontFamily:"Manrope", fontSize:13, color:"#e0a08a", margin:"8px 0 0" }}>{t.reviewNeed}</div>}
+              {reviewState==="error" && <div style={{ fontFamily:"Manrope", fontSize:13, color:"#e0a08a", margin:"8px 0 0" }}>{t.reviewErr}</div>}
+              <button onClick={submitReview} disabled={reviewState==="sending"} className="ork-btn" style={{ width:"100%", marginTop:14, cursor: reviewState==="sending"?"default":"pointer", border:"none", borderRadius:12, padding:"14px", background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft} 55%, ${C.gold})`, color:"#221704", fontFamily:"Manrope", fontWeight:600, fontSize:15, letterSpacing:0.5 }}>{reviewState==="sending"?t.sending:t.reviewSend}</button>
+            </div>
+          )}
+        </section>
+
+        <section style={{ marginTop:40 }}>
+          <h2 style={{ fontFamily:"Cormorant Garamond", fontWeight:500, fontSize:30, textAlign:"center", color:C.cream, margin:"0 0 6px" }}>{t.consult}</h2>
+          <p style={{ fontFamily:"Cormorant Garamond", fontStyle:"italic", fontSize:16, textAlign:"center", color:C.mauve, margin:"0 0 20px" }}>{t.consultSub}</p>
+          {formState === "done" ? (
+            <div className="ork-rise" style={{ background:`linear-gradient(165deg, ${C.panel2}, ${C.panel})`, border:`1px solid ${C.gold}`, borderRadius:16, padding:"22px 18px", textAlign:"center", boxShadow:`0 0 30px -16px ${C.gold}` }}>
+              <div style={{ fontFamily:"Cormorant Garamond", fontSize:23, color:C.cream, marginBottom:6 }}>{t.thanks}</div>
+              <div style={{ fontFamily:"Manrope", fontSize:14, color:C.mauve, lineHeight:1.5 }}>{t.formDoneBody}</div>
+            </div>
+          ) : (
+            <div style={{ background:C.panel, border:`1px solid ${C.line}`, borderRadius:16, padding:"18px" }}>
+              {[{ k:"name", label:t.name, ph:t.namePh }, { k:"contact", label:t.contact, ph:t.contactPh }].map((f)=>(
+                <div key={f.k} style={{ marginBottom:14 }}>
+                  <label style={{ display:"block", fontFamily:"Manrope", fontSize:11, letterSpacing:1, textTransform:"uppercase", color:C.mauve, marginBottom:6 }}>{f.label}</label>
+                  <input value={form[f.k]} onChange={(e)=>setForm({ ...form, [f.k]:e.target.value })} placeholder={f.ph} style={{ width:"100%", background:C.bg, border:`1px solid ${C.line}`, borderRadius:10, color:C.cream, fontFamily:"Manrope", fontSize:15, padding:"11px 13px", outline:"none", boxSizing:"border-box" }} />
+                </div>
+              ))}
+              <div style={{ marginBottom:4 }}>
+                <label style={{ display:"block", fontFamily:"Manrope", fontSize:11, letterSpacing:1, textTransform:"uppercase", color:C.mauve, marginBottom:4 }}>{t.request}</label>
+                <div style={{ fontFamily:"Manrope", fontSize:12, color:C.mauve, opacity:0.85, marginBottom:7, lineHeight:1.4 }}>{t.requestHelp}</div>
+                <textarea value={form.request} onChange={(e)=>setForm({ ...form, request:e.target.value })} rows={3} placeholder={t.requestPh} style={{ width:"100%", resize:"none", background:C.bg, border:`1px solid ${C.line}`, borderRadius:10, color:C.cream, fontFamily:"Manrope", fontSize:15, padding:"11px 13px", outline:"none", boxSizing:"border-box" }} />
+              </div>
+              {formState==="need" && <div style={{ fontFamily:"Manrope", fontSize:13, color:"#e0a08a", margin:"8px 0 0" }}>{t.formNeed}</div>}
+              {formState==="error" && <div style={{ fontFamily:"Manrope", fontSize:13, color:"#e0a08a", margin:"8px 0 0" }}>{t.formErr}</div>}
+              <button onClick={submitForm} disabled={formState==="sending"} className="ork-btn" style={{ width:"100%", marginTop:14, cursor: formState==="sending"?"default":"pointer", border:"none", borderRadius:12, padding:"15px", background:`linear-gradient(135deg, ${C.gold}, ${C.goldSoft} 55%, ${C.gold})`, color:"#221704", fontFamily:"Manrope", fontWeight:600, fontSize:15, letterSpacing:0.5 }}>{formState==="sending"?t.sending:t.formSend}</button>
+            </div>
+          )}
+        </section>
+
+        <footer style={{ marginTop:46, textAlign:"center", fontFamily:"Manrope", fontSize:11, color:C.mauve, lineHeight:1.6 }}>{t.footer}</footer>
+      </div>
+    </div>
+  );
+}
